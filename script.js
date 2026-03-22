@@ -3,7 +3,7 @@ const CLIENT_ID_KEY = "minyanManClientId";
 const GOOGLE_MAPS_LIBRARIES = "places";
 const APP_CONFIG = window.MINYAN_MAN_LOCAL_CONFIG || {};
 const API_BASE_URL = APP_CONFIG.apiBaseUrl || "";
-const GOOGLE_MAPS_API_KEY = APP_CONFIG.googleMapsApiKey || "";
+const GOOGLE_MAPS_API_KEY = APP_CONFIG.googleMapsApiKey || "AIzaSyDGVGcxsvx9GnyuW8klL0mRDA_wQCoSFGM";
 const GOOGLE_MAPS_READY = Boolean(GOOGLE_MAPS_API_KEY && !GOOGLE_MAPS_API_KEY.startsWith("YOUR_"));
 const DEBUG_PREFIX = "[Minyan-Man]";
 
