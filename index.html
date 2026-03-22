@@ -52,15 +52,10 @@
 
           <div class="field">
             <label for="minyan-location">Location</label>
-            <input
-              id="minyan-location"
-              name="location"
-              type="text"
-              placeholder="Start typing and choose a Google Maps location"
-              required
-              aria-required="true"
-              aria-describedby="location-help"
-            >
+            <div id="location-widget-host" class="location-widget-host" aria-describedby="location-help"></div>
+            <div id="create-map-canvas" class="create-map-canvas" aria-label="Map for choosing the minyan location"></div>
+            <p id="create-map-selection" class="helper-text">Search above to drop the minyan on the map.</p>
+            <input id="minyan-location" name="location" type="hidden" required aria-required="true">
             <p id="location-help" class="helper-text">
               Use the Google Maps suggestions and select one of the results.
             </p>

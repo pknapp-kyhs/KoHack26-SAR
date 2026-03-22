@@ -211,6 +211,33 @@ textarea {
   min-height: 60px;
 }
 
+.location-widget-host {
+  width: 100%;
+}
+
+.location-widget-host gmp-place-autocomplete {
+  display: block;
+  width: 100%;
+}
+
+.create-map-canvas {
+  width: 100%;
+  min-height: 280px;
+  margin-top: 14px;
+  border: 2px solid #8a9bab;
+  border-radius: 22px;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(14, 90, 90, 0.12), rgba(184, 92, 56, 0.15)),
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.45) 0,
+      rgba(255, 255, 255, 0.45) 18px,
+      transparent 18px,
+      transparent 36px
+    );
+}
+
 textarea {
   min-height: 160px;
   resize: vertical;

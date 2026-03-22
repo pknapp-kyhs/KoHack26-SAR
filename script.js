@@ -5,6 +5,7 @@ const APP_CONFIG = window.MINYAN_MAN_LOCAL_CONFIG || {};
 const API_BASE_URL = APP_CONFIG.apiBaseUrl || "";
 const GOOGLE_MAPS_API_KEY = APP_CONFIG.googleMapsApiKey || "";
 const GOOGLE_MAPS_READY = Boolean(GOOGLE_MAPS_API_KEY && !GOOGLE_MAPS_API_KEY.startsWith("YOUR_"));
+const DEBUG_PREFIX = "[Minyan-Man]";
 
 const clientId = getOrCreateClientId();
 
@@ -15,12 +16,17 @@ let toastTimer = null;
 let googleMapsReady = false;
 let locationAutocomplete = null;
 let refreshTimer = null;
+let createMap = null;
+let createMapMarker = null;
 
 const refs = {
   form: document.getElementById("create-minyan-form"),
   dateInput: document.getElementById("minyan-date"),
   timeInput: document.getElementById("minyan-time"),
   locationInput: document.getElementById("minyan-location"),
+  locationWidgetHost: document.getElementById("location-widget-host"),
+  createMapCanvas: document.getElementById("create-map-canvas"),
+  createMapSelection: document.getElementById("create-map-selection"),
   mapInput: document.getElementById("minyan-map"),
   minyanList: document.getElementById("minyan-list"),
   detailsContent: document.getElementById("details-content"),
@@ -34,6 +40,10 @@ const refs = {
 initializeUi();
 
 function initializeUi() {
+  debugLog("App boot", {
+    apiBaseUrl: API_BASE_URL || "(same origin)",
+    googleMapsReady: GOOGLE_MAPS_READY,
+  });
   setDefaultFormValues();
   bindEvents();
   renderApp();
@@ -45,9 +55,6 @@ function initializeUi() {
 
 function bindEvents() {
   refs.form.addEventListener("submit", handleCreateMinyan);
-  refs.locationInput.addEventListener("input", () => {
-    selectedGooglePlace = null;
-  });
 }
 
 function setDefaultFormValues() {
@@ -57,8 +64,6 @@ function setDefaultFormValues() {
   const defaultTime = `${String(nextHour.getHours()).padStart(2, "0")}:00`;
 
   refs.dateInput.min = minDate;
-  refs.locationInput.autocomplete = "off";
-
   if (!refs.dateInput.value) {
     refs.dateInput.value = minDate;
   }
@@ -70,6 +75,7 @@ function setDefaultFormValues() {
 
 async function loadMinyanim() {
   try {
+    debugLog("Loading minyanim", { url: `${API_BASE_URL}/api/minyanim` });
     const response = await fetch(`${API_BASE_URL}/api/minyanim`);
 
     if (!response.ok) {
@@ -83,8 +89,13 @@ async function loadMinyanim() {
       selectedMinyanId = minyanim[0]?.id || null;
     }
 
+    debugLog("Minyanim loaded", {
+      count: minyanim.length,
+      selectedMinyanId,
+    });
     renderApp();
-  } catch {
+  } catch (error) {
+    debugError("Load minyanim failed", error);
     showToast("Could not load shared minyanim from the local server.");
   }
 }
@@ -367,21 +378,24 @@ async function handleCreateMinyan(event) {
   };
 
   if (!payload.date || !payload.time || !payload.location || !payload.notes) {
+    debugLog("Create minyan blocked: missing fields", payload);
     showToast("Please fill in the date, time, location, and notes.");
     announceToScreenReader("Please fill in the required fields.");
     return;
   }
 
   if (!selectedGooglePlace) {
+    debugLog("Create minyan blocked: no selected Google place");
     showToast("Please choose the location from Google Maps suggestions.");
     announceToScreenReader("Please choose the location from Google Maps suggestions.");
-    refs.locationInput.focus();
+    focusLocationWidget();
     return;
   }
 
   payload.location = selectedGooglePlace.formatted_address || selectedGooglePlace.name || payload.location;
 
   try {
+    debugLog("Creating minyan", payload);
     const response = await fetch(`${API_BASE_URL}/api/minyanim`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -398,7 +412,8 @@ async function handleCreateMinyan(event) {
     showToast("New minyan saved to the local server.");
     announceToScreenReader("New minyan saved successfully.");
     await loadMinyanim();
-  } catch {
+  } catch (error) {
+    debugError("Create minyan failed", error);
     showToast("Could not save the new minyan.");
   }
 }
@@ -412,12 +427,21 @@ async function updateResponse(minyanId, responseType) {
   };
 
   if (!payload.name) {
+    debugLog("Update response blocked: missing participant name", {
+      minyanId,
+      responseType,
+    });
     showToast("Please enter your name before choosing a response.");
     announceToScreenReader("Please enter your name before choosing a response.");
     return;
   }
 
   try {
+    debugLog("Saving participant response", {
+      minyanId,
+      responseType,
+      clientId,
+    });
     const response = await fetch(`${API_BASE_URL}/api/minyanim/${encodeURIComponent(minyanId)}/participants`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -431,7 +455,8 @@ async function updateResponse(minyanId, responseType) {
     showToast(`Response saved: ${getResponseLabel(responseType)}.`);
     announceToScreenReader(`Response saved: ${getResponseLabel(responseType)}.`);
     await loadMinyanim();
-  } catch {
+  } catch (error) {
+    debugError("Save participant response failed", error);
     showToast("Could not save your response.");
   }
 }
@@ -584,36 +609,154 @@ function getGroupMessage() {
 
 function initializeGoogleMaps() {
   if (!GOOGLE_MAPS_READY) {
+    debugLog("Google Maps disabled: missing or placeholder API key");
     return;
   }
 
-  window.initMinyanManMaps = () => {
+  window.initMinyanManMaps = async () => {
     googleMapsReady = true;
-    setupLocationAutocomplete();
+    debugLog("Google Maps script loaded");
+    await setupCreateMap();
+    await setupLocationAutocomplete();
   };
 
   const script = document.createElement("script");
   script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=${GOOGLE_MAPS_LIBRARIES}&callback=initMinyanManMaps`;
   script.async = true;
   script.defer = true;
+  script.onerror = (error) => {
+    debugError("Google Maps script failed to load", error);
+  };
   document.head.appendChild(script);
+  debugLog("Google Maps script requested");
 }
 
-function setupLocationAutocomplete() {
-  if (!googleMapsReady || !window.google?.maps?.places || locationAutocomplete) {
+async function setupLocationAutocomplete() {
+  if (!googleMapsReady || !window.google?.maps || locationAutocomplete || !refs.locationWidgetHost) {
+    debugLog("Skipping autocomplete setup", {
+      googleMapsReady,
+      hasGoogleMaps: Boolean(window.google?.maps),
+      hasWidgetHost: Boolean(refs.locationWidgetHost),
+      alreadyCreated: Boolean(locationAutocomplete),
+    });
     return;
   }
 
-  locationAutocomplete = new google.maps.places.Autocomplete(refs.locationInput, {
-    fields: ["formatted_address", "name", "geometry", "place_id"],
-    types: ["geocode"],
-  });
+  try {
+    await google.maps.importLibrary("places");
+    locationAutocomplete = new google.maps.places.PlaceAutocompleteElement({
+      includedPrimaryTypes: ["geocode"],
+    });
+    locationAutocomplete.setAttribute("placeholder", "Start typing and choose a Google Maps location");
+    refs.locationWidgetHost.replaceChildren(locationAutocomplete);
+    debugLog("PlaceAutocompleteElement ready");
 
-  locationAutocomplete.addListener("place_changed", () => {
-    const place = locationAutocomplete.getPlace();
-    selectedGooglePlace = place;
-    refs.locationInput.value = place.formatted_address || place.name || refs.locationInput.value;
+    locationAutocomplete.addEventListener("gmp-select", async ({ placePrediction }) => {
+      try {
+        const place = placePrediction.toPlace();
+        await place.fetchFields({
+          fields: ["displayName", "formattedAddress", "location", "id"],
+        });
+
+        selectedGooglePlace = {
+          place_id: place.id || "",
+          name: place.displayName || "",
+          formatted_address: place.formattedAddress || "",
+          location: place.location || null,
+        };
+
+        refs.locationInput.value = selectedGooglePlace.formatted_address || selectedGooglePlace.name || "";
+        debugLog("Place selected", selectedGooglePlace);
+        updateCreateMapSelection();
+      } catch (error) {
+        debugError("Place selection failed", error);
+      }
+    });
+  } catch (error) {
+    debugError("Autocomplete setup failed", error);
+  }
+}
+
+async function setupCreateMap() {
+  if (!googleMapsReady || !window.google?.maps || createMap || !refs.createMapCanvas) {
+    debugLog("Skipping create map setup", {
+      googleMapsReady,
+      hasGoogleMaps: Boolean(window.google?.maps),
+      hasCreateMapCanvas: Boolean(refs.createMapCanvas),
+      alreadyCreated: Boolean(createMap),
+    });
+    return;
+  }
+
+  try {
+    const { Map } = await google.maps.importLibrary("maps");
+    createMap = new Map(refs.createMapCanvas, {
+      center: { lat: 40.7128, lng: -74.006 },
+      zoom: 11,
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: false,
+      clickableIcons: false,
+    });
+    debugLog("Create map ready");
+  } catch (error) {
+    debugError("Create map setup failed", error);
+  }
+}
+
+function updateCreateMapSelection() {
+  if (!selectedGooglePlace || !selectedGooglePlace.location || !createMap || !window.google?.maps) {
+    debugLog("Skipping create map selection update", {
+      hasSelectedPlace: Boolean(selectedGooglePlace),
+      hasLocation: Boolean(selectedGooglePlace?.location),
+      hasCreateMap: Boolean(createMap),
+      hasGoogleMaps: Boolean(window.google?.maps),
+    });
+    return;
+  }
+
+  const lat = typeof selectedGooglePlace.location.lat === "function"
+    ? selectedGooglePlace.location.lat()
+    : selectedGooglePlace.location.lat;
+  const lng = typeof selectedGooglePlace.location.lng === "function"
+    ? selectedGooglePlace.location.lng()
+    : selectedGooglePlace.location.lng;
+  const position = { lat, lng };
+
+  createMap.setCenter(position);
+  createMap.setZoom(16);
+
+  if (!createMapMarker) {
+    createMapMarker = new google.maps.Marker({
+      map: createMap,
+      position,
+      title: selectedGooglePlace.name || selectedGooglePlace.formatted_address || "Selected minyan location",
+    });
+  } else {
+    createMapMarker.setPosition(position);
+    createMapMarker.setTitle(selectedGooglePlace.name || selectedGooglePlace.formatted_address || "Selected minyan location");
+  }
+
+  if (refs.createMapSelection) {
+    refs.createMapSelection.textContent =
+      selectedGooglePlace.formatted_address || selectedGooglePlace.name || "Location selected.";
+  }
+
+  debugLog("Create map updated", {
+    lat,
+    lng,
+    label: refs.createMapSelection?.textContent || "",
   });
+}
+
+function focusLocationWidget() {
+  const widget = refs.locationWidgetHost?.querySelector("gmp-place-autocomplete");
+  if (widget && typeof widget.focus === "function") {
+    widget.focus();
+    return;
+  }
+
+  refs.locationWidgetHost?.focus?.();
 }
 
 function getTextFieldValue(id) {
@@ -673,4 +816,17 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value);
+}
+
+function debugLog(message, details) {
+  if (details !== undefined) {
+    console.log(`${DEBUG_PREFIX} ${message}`, details);
+    return;
+  }
+
+  console.log(`${DEBUG_PREFIX} ${message}`);
+}
+
+function debugError(message, error) {
+  console.error(`${DEBUG_PREFIX} ${message}`, error);
 }
