@@ -1,0 +1,4 @@
+local-config.js
+data/
+node_modules/
+package-lock.json
